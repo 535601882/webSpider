@@ -3,6 +3,7 @@ const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const readline = require('readline');
+const path = require('path');
 
 // 连接到 MongoDB
 mongoose.connect('mongodb://127.0.0.1:27017/scraping', {
@@ -275,3 +276,77 @@ async function retryFailedScrapes(filePath,callback) {
  * @param {function} callback 回调函数
  */
 // retryFailedScrapes('./failed_scrape_details.txt',scrapeDetailsById);
+
+
+/***
+ * 下载指定页面上的图片******************************
+ */
+
+// 下载图片并保存到本地
+async function downloadImage(imageUrl, folderPath, filename) {
+    const filePath = path.resolve(folderPath, filename);
+    const writer = fs.createWriteStream(filePath);
+
+    const response = await axios({
+        url: imageUrl,
+        method: 'GET',
+        responseType: 'stream'
+    });
+
+    response.data.pipe(writer);
+
+    return new Promise((resolve, reject) => {
+        writer.on('finish', resolve);
+        writer.on('error', reject);
+    });
+}
+
+// 主函数：获取页面上的所有图片并保存
+async function scrapeImages(url) {
+    try {
+        // 从 URL 中提取路径部分用于创建文件夹（如 h-col-115）
+        const folderName = url.match(/\/([^\/]+)\.html/)[1];
+        const imagesDir = path.resolve(__dirname, folderName);
+
+        // 如果文件夹不存在则创建
+        if (!fs.existsSync(imagesDir)) {
+            fs.mkdirSync(imagesDir);
+            console.log(`已创建文件夹: ${folderName}`);
+        }
+
+        const { data } = await axios.get(url);
+        const $ = cheerio.load(data);
+
+        const imageElements = $('img'); // 选择页面上的所有 img 标签
+        const imageUrls = [];
+
+        imageElements.each((index, element) => {
+            let imgUrl = $(element).attr('src');
+
+            // 处理相对路径的情况
+            if (imgUrl && !imgUrl.startsWith('http')) {
+                imgUrl = new URL(imgUrl, url).href;
+            }
+
+            if (imgUrl) {
+                imageUrls.push(imgUrl);
+            }
+        });
+
+        console.log(`找到 ${imageUrls.length} 张图片，开始下载...`);
+
+        for (const [index, imageUrl] of imageUrls.entries()) {
+            const filename = path.basename(imageUrl);
+            await downloadImage(imageUrl, imagesDir, filename);
+            console.log(`已下载: ${filename}`);
+        }
+
+        console.log('所有图片下载完成');
+    } catch (error) {
+        console.error('抓取图片时发生错误:', error);
+    }
+}
+
+// 调用 scrapeImages 函数，传递 URL
+const targetUrl = 'https://www.****.com.cn/h-col-115.html';
+scrapeImages(targetUrl);
